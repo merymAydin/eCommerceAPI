@@ -1,10 +1,12 @@
 package com.example.ecommerce.dto.request;
 
-import com.example.ecommerce.entity.Role;
+
+import jakarta.validation.constraints.*;
 
 public record UserCreateRequest(
-        String username,
-        String email,
-        Long roleId
-) {
+        @NotBlank String username,
+        @NotBlank @Email String email,
+        @NotBlank @Size(min = 6) String password,
+        @NotNull @Positive Long roleId
+        ) {
 }
