@@ -31,6 +31,10 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
 
+    private UserResponse toUserResponse(User user) {
+        return new UserResponse(user.getUserName(), user.getEmail(),user.getRole().getRoleName());
+    }
+
 
     @Override
     public UserResponse createUser(UserCreateRequest userCreateRequest) {
@@ -41,7 +45,7 @@ public class UserServiceImpl implements UserService {
         user.setRole(role);
         user.setPassword(passwordEncoder.encode(userCreateRequest.password()));
         User savedUser = userRepository.save(user);
-        return new UserResponse(savedUser.getUserName(), savedUser.getEmail(), savedUser.getRole().getRoleName());
+        return toUserResponse(savedUser);
     }
 
     @Override
@@ -56,13 +60,16 @@ public class UserServiceImpl implements UserService {
         user.setUserName(userUpdateRequest.username());
         user.setEmail(userUpdateRequest.email());
         User savedUser = userRepository.save(user);
-        return new UserResponse(savedUser.getUserName(), savedUser.getEmail(),savedUser.getRole().getRoleName());
+        return toUserResponse(savedUser);
+
     }
     @Override
     public UserResponse updatePassword(Long id, PasswordUpdateRequest passwordUpdateRequest) {
         User user = userRepository.findById(id).orElseThrow(()-> new ResourceNotFoundException("User not found"));
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         User authenticatedUser = (User) authentication.getPrincipal();
+
+
 
         if (!user.getId().equals(authenticatedUser.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
@@ -74,7 +81,8 @@ public class UserServiceImpl implements UserService {
 
         user.setPassword(passwordEncoder.encode(passwordUpdateRequest.newPassword()));
         User savedUser = userRepository.save(user);
-        return new UserResponse(savedUser.getUserName(), savedUser.getEmail(),savedUser.getRole().getRoleName());
+
+        return toUserResponse(savedUser);
     }
 
     @Override

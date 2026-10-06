@@ -32,6 +32,15 @@ public class SecurityConfig {
                                 .requestMatchers("/users/login").permitAll()
                                 .requestMatchers(HttpMethod.POST, "/users").permitAll()
                                 .requestMatchers(HttpMethod.PUT,"/users/{id}").hasAuthority("ROLE_STORE")
+                                .requestMatchers(HttpMethod.GET,"/roles").hasAuthority("ROLE_STORE")
+                                .requestMatchers(HttpMethod.GET,"/roles/{id}").hasAuthority("ROLE_STORE")
+                                .requestMatchers(HttpMethod.GET, "/products").permitAll()
+                                .requestMatchers(HttpMethod.GET, "/products/{id}").permitAll()
+                                .requestMatchers(HttpMethod.GET, "/products/name").permitAll()
+
+                                .requestMatchers(HttpMethod.POST, "/products").hasAuthority("ROLE_STORE")
+                                .requestMatchers(HttpMethod.PUT, "/products/{id}").hasAuthority("ROLE_STORE")
+                                .requestMatchers(HttpMethod.DELETE, "/products/{id}").hasAuthority("ROLE_STORE")
                                 .anyRequest().authenticated()
                 )
                 .build();

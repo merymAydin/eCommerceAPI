@@ -5,11 +5,12 @@ import com.example.ecommerce.entity.Gender;
 import java.math.BigDecimal;
 import java.util.List;
 
-public record CategoryResponse(
+public record CategoryDetailResponse(
         Long id,
         String code,
         String title,
         String img,
         BigDecimal rating,
-        Gender gender
+        Gender gender,
+        List<ProductResponse> products
 ) {}
