@@ -13,14 +13,11 @@ import java.math.BigDecimal;
 @Entity
 @Table(schema = "public", name = "payments")
 public class Payment extends BaseEntity{
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id",nullable=false)
     private Order order;
 
-
     private String provider;
-
 
     private String providerPaymentId;
 
@@ -30,7 +27,6 @@ public class Payment extends BaseEntity{
 
     @Enumerated(EnumType.STRING)
     private PaymentStatus status;
-
 }
 
 

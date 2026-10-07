@@ -8,11 +8,6 @@ import java.math.BigDecimal;
 
 public record CreateOrderItemRequest(
          @NotNull Long productId,
-         @Positive int quantity,
-         String shippingAddress,
-         String shippingCity,
-         String shippingCountry,
-         String shippingDistrict,
-         String shippingPostalCode
+         @Positive int quantity
 ) {
 }
