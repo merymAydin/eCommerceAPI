@@ -4,7 +4,6 @@ package com.example.ecommerce.controller;
 import com.example.ecommerce.dto.request.CreateProductRequest;
 import com.example.ecommerce.dto.request.UpdateProductRequest;
 import com.example.ecommerce.dto.response.ProductResponse;
-import com.example.ecommerce.entity.Product;
 import com.example.ecommerce.service.interfaces.ProductService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
@@ -19,7 +18,7 @@ public class ProductController {
         this.productService = productService;
     }
     @GetMapping
-    public List<Product> getAllProducts() {
+    public List<ProductResponse> getAllProducts() {
         return productService.findAllProducts();
     }
     @GetMapping("/{id}")

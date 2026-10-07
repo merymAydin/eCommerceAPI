@@ -41,6 +41,16 @@ public class SecurityConfig {
                                 .requestMatchers(HttpMethod.POST, "/products").hasAuthority("ROLE_STORE")
                                 .requestMatchers(HttpMethod.PUT, "/products/{id}").hasAuthority("ROLE_STORE")
                                 .requestMatchers(HttpMethod.DELETE, "/products/{id}").hasAuthority("ROLE_STORE")
+
+
+                                .requestMatchers(HttpMethod.GET, "/orders/{id}")
+                                .hasAuthority("ROLE_CUSTOMER")
+                                .requestMatchers(HttpMethod.GET, "/orders")
+                                .hasAuthority("ROLE_CUSTOMER")
+
+                                .requestMatchers(HttpMethod.POST, "/orders").hasAuthority("ROLE_CUSTOMER")
+                                .requestMatchers(HttpMethod.PUT, "/orders/{id}").hasAuthority("ROLE_CUSTOMER")
+                                .requestMatchers(HttpMethod.DELETE, "/orders/{id}").hasAuthority("ROLE_CUSTOMER")
                                 .anyRequest().authenticated()
                 )
                 .build();

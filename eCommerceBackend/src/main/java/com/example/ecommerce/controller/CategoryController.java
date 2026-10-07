@@ -7,15 +7,22 @@ import com.example.ecommerce.dto.response.CategoryResponse;
 import com.example.ecommerce.service.interfaces.CategoryService;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/categories")
-@AllArgsConstructor
+
 public class CategoryController {
+
     private CategoryService categoryService;
+
+    public CategoryController(CategoryService categoryService) {
+        this.categoryService = categoryService;
+    }
+
 
     @GetMapping
     public List<CategoryResponse> getAllCategories() {

@@ -4,9 +4,10 @@ import com.example.ecommerce.dto.request.CreateCategoryRequest;
 import com.example.ecommerce.dto.request.UpdateCategoryRequest;
 import com.example.ecommerce.dto.response.CategoryDetailResponse;
 import com.example.ecommerce.dto.response.CategoryResponse;
-import com.example.ecommerce.entity.Category;
+
 
 import java.util.List;
+
 
 public interface CategoryService {
 
