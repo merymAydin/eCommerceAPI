@@ -22,7 +22,7 @@ public class Order extends BaseEntity{
     @Enumerated(EnumType.STRING)
     private OrderStatus status;
 
-    @OneToMany(mappedBy = "order")
+    @OneToMany(mappedBy = "order",cascade = CascadeType.ALL,orphanRemoval = true,fetch = FetchType.LAZY)
     private List<OrderItem> orderItems;
 
     @OneToMany(mappedBy = "order")
