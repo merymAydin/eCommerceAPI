@@ -2,6 +2,7 @@ package com.example.ecommerce.controller;
 
 import com.example.ecommerce.dto.request.CreatePaymentRequest;
 import com.example.ecommerce.dto.request.UpdatePaymentRequest;
+import com.example.ecommerce.dto.response.CheckoutSessionResponse;
 import com.example.ecommerce.dto.response.PaymentResponse;
 import com.example.ecommerce.entity.Payment;
 import com.example.ecommerce.service.interfaces.PaymentService;
@@ -22,10 +23,13 @@ public class PaymentController {
     public PaymentResponse createPayment(@Valid @RequestBody CreatePaymentRequest createPaymentRequest) {
         return paymentService.createPayment(createPaymentRequest);
     }
-    @PutMapping("/{id}")
-    public PaymentResponse updatePayment(@PathVariable Long id, @Valid @RequestBody UpdatePaymentRequest req) {
-        return paymentService.updatePayment(id,req);
+    @PostMapping("/checkout-session/{orderId}")
+    public CheckoutSessionResponse createCheckoutSession(
+            @PathVariable Long orderId
+    ) {
+        return paymentService.createCheckoutSession(orderId);
     }
+
     @DeleteMapping("/{id}")
     public void deletePayment(@PathVariable Long id) {
          paymentService.deletePayment(id);

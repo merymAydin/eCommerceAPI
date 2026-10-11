@@ -6,6 +6,7 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -23,6 +24,7 @@ public class SecurityConfig {
         return http
 
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .cors(Customizer.withDefaults())
                 .csrf(csrf->csrf.disable())
                 .sessionManagement(
                         session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
@@ -41,6 +43,18 @@ public class SecurityConfig {
                                 .requestMatchers(HttpMethod.POST, "/products").hasAuthority("ROLE_STORE")
                                 .requestMatchers(HttpMethod.PUT, "/products/{id}").hasAuthority("ROLE_STORE")
                                 .requestMatchers(HttpMethod.DELETE, "/products/{id}").hasAuthority("ROLE_STORE")
+                                .requestMatchers(
+                                        HttpMethod.POST,
+                                        "/admin/migration/products/preview"
+                                ).permitAll()
+                                .requestMatchers(
+                                        HttpMethod.POST,
+                                        "/admin/migration/categories"
+                                ).permitAll()
+                                .requestMatchers(
+                                        HttpMethod.POST,
+                                        "/admin/migration/products"
+                                ).permitAll()
 
 
                                 .requestMatchers(HttpMethod.GET, "/orders/{id}")
@@ -51,6 +65,7 @@ public class SecurityConfig {
                                 .requestMatchers(HttpMethod.POST, "/orders").hasAuthority("ROLE_CUSTOMER")
                                 .requestMatchers(HttpMethod.PUT, "/orders/{id}").hasAuthority("ROLE_CUSTOMER")
                                 .requestMatchers(HttpMethod.DELETE, "/orders/{id}").hasAuthority("ROLE_CUSTOMER")
+                                .requestMatchers(HttpMethod.GET, "/categories").permitAll()
                                 .anyRequest().authenticated()
                 )
                 .build();

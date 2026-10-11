@@ -8,7 +8,6 @@ public record UpdatePaymentRequest(
         Long orderId,
         String provider,
         String providerPaymentId,
-        BigDecimal amount,
-        PaymentStatus status
+        BigDecimal amount
 ) {
 }

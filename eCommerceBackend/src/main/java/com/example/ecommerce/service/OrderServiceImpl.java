@@ -19,7 +19,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 
 @Service
@@ -56,10 +58,14 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public OrderResponse createOrder(CreateOrderRequest orderCreateRequest) {
         Order order = new Order();
-        User user = userRepository.findByEmail(orderCreateRequest.email());
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
+        User user = (User) authentication.getPrincipal();
         if (user == null) {
             throw new ResourceNotFoundException("User not found");
         }
+
         order.setUser(user);
         order.setCreatedAt(LocalDateTime.now());
         order.setOrderItems(
@@ -80,7 +86,7 @@ public class OrderServiceImpl implements OrderService {
 
                             return orderItem;
                         })
-                        .toList());
+                                .collect(Collectors.toCollection(ArrayList::new)));
         order.setStatus(OrderStatus.PENDING);
         Order savedOrder = orderRepository.save(order);
         return toOrderResponse(savedOrder);
@@ -95,9 +101,11 @@ public class OrderServiceImpl implements OrderService {
         if (!user.getId().equals(order.getUser().getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
-        order.setOrderItems(updateOrderRequest.orderItems().stream().map(
-                item->{
-                    Product p = productRepository.findById(item.productId()).orElseThrow(() -> new RuntimeException("Product not found"));
+        List<OrderItem> newOrderItems = updateOrderRequest.orderItems()
+                .stream()
+                .map(item -> {
+                    Product p = productRepository.findById(item.productId())
+                            .orElseThrow(() -> new ResourceNotFoundException("Product not found"));
 
                     OrderItem orderItem = new OrderItem();
                     orderItem.setOrder(order);
@@ -107,9 +115,11 @@ public class OrderServiceImpl implements OrderService {
                     orderItem.setUnitPrice(p.getPrice());
 
                     return orderItem;
-                }
-        ).toList());
-        order.setStatus(OrderStatus.valueOf(updateOrderRequest.status()));
+                })
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        order.getOrderItems().clear();
+        order.getOrderItems().addAll(newOrderItems);
         order.setShippingAddress(updateOrderRequest.shippingAddress());
         order.setShippingCity(updateOrderRequest.shippingCity());
         order.setShippingDistrict(updateOrderRequest.shippingDistrict());
