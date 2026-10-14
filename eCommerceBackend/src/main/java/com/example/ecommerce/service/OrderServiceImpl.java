@@ -33,6 +33,7 @@ public class OrderServiceImpl implements OrderService {
 
     private OrderResponse toOrderResponse(Order order) {
         return new OrderResponse(
+                order.getId(),
                 order.getUser().getUserName(),
                 order.getUser().getEmail(),
                 order.getOrderItems()
@@ -54,28 +55,40 @@ public class OrderServiceImpl implements OrderService {
         );
     }
 
+
     @Transactional
     @Override
     public OrderResponse createOrder(CreateOrderRequest orderCreateRequest) {
+
         Order order = new Order();
+
         Authentication authentication =
                 SecurityContextHolder.getContext().getAuthentication();
 
         User user = (User) authentication.getPrincipal();
+
         if (user == null) {
             throw new ResourceNotFoundException("User not found");
         }
 
         order.setUser(user);
         order.setCreatedAt(LocalDateTime.now());
+
+
+        order.setShippingAddress(orderCreateRequest.shippingAddress());
+        order.setShippingCity(orderCreateRequest.shippingCity());
+        order.setShippingDistrict(orderCreateRequest.shippingDistrict());
+        order.setShippingPostalCode(orderCreateRequest.shippingPostalCode());
+
+
         order.setOrderItems(
-                orderCreateRequest
-                        .orderItems()
+                orderCreateRequest.orderItems()
                         .stream()
                         .map(item -> {
                             Product p = productRepository
                                     .findById(item.productId())
-                                    .orElseThrow(() -> new ResourceNotFoundException("Product not found"));
+                                    .orElseThrow(() ->
+                                            new ResourceNotFoundException("Product not found"));
 
                             OrderItem orderItem = new OrderItem();
                             orderItem.setOrder(order);
@@ -86,11 +99,16 @@ public class OrderServiceImpl implements OrderService {
 
                             return orderItem;
                         })
-                                .collect(Collectors.toCollection(ArrayList::new)));
+                        .collect(Collectors.toCollection(ArrayList::new))
+        );
+
         order.setStatus(OrderStatus.PENDING);
+
         Order savedOrder = orderRepository.save(order);
+
         return toOrderResponse(savedOrder);
     }
+
 
     @Transactional
     @Override

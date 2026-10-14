@@ -23,13 +23,11 @@ public class Product extends BaseEntity{
     private BigDecimal price;
     private int stock;
     private String imageUrl;
-    @ManyToOne
-    @JoinColumn(name = "store_id")
+    @ManyToOne(optional = false)
+    @JoinColumn(name = "store_id", nullable = false)
     private Store store;
 
     @Column(unique = true)
     private Long sourceProductId;
-
-
 
 }

@@ -119,4 +119,14 @@ public class UserServiceImpl implements UserService {
         }
         return user;
     }
+
+    @Override
+    public UserResponse verifyUser() {
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
+        User user = (User) authentication.getPrincipal();
+
+        return toUserResponse(user);
+    }
 }

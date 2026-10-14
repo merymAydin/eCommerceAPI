@@ -33,4 +33,8 @@ public class UserController {
     public UserResponse updatePassword(@PathVariable Long id,@Valid @RequestBody PasswordUpdateRequest passwordUpdateRequest) {
         return userService.updatePassword(id,passwordUpdateRequest);
     }
+    @GetMapping("/verify")
+    public UserResponse verifyUser() {
+        return userService.verifyUser();
+    }
 }

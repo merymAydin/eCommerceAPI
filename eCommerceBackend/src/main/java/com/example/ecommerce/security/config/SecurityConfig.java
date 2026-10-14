@@ -12,6 +12,11 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 @Configuration
 @EnableWebSecurity
@@ -20,7 +25,26 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
     @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
+        configuration.setAllowedMethods(List.of(
+                "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"
+        ));
+        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowCredentials(true);
+
+        UrlBasedCorsConfigurationSource source =
+                new UrlBasedCorsConfigurationSource();
+
+        source.registerCorsConfiguration("/**", configuration);
+
+        return source;
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+
         return http
 
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
@@ -31,10 +55,13 @@ public class SecurityConfig {
                 )
                 .authorizeHttpRequests(
                         auth-> auth
-                                .requestMatchers("/users/login").permitAll()
+                                .requestMatchers(HttpMethod.POST, "/users/login").permitAll()
+                                .requestMatchers(HttpMethod.POST, "/users/register").permitAll()
                                 .requestMatchers(HttpMethod.POST, "/users").permitAll()
+                                .requestMatchers(HttpMethod.POST, "/signup").permitAll()
+
                                 .requestMatchers(HttpMethod.PUT,"/users/{id}").hasAuthority("ROLE_STORE")
-                                .requestMatchers(HttpMethod.GET,"/roles").hasAuthority("ROLE_STORE")
+                                .requestMatchers(HttpMethod.GET, "/roles").permitAll()
                                 .requestMatchers(HttpMethod.GET,"/roles/{id}").hasAuthority("ROLE_STORE")
                                 .requestMatchers(HttpMethod.GET, "/products").permitAll()
                                 .requestMatchers(HttpMethod.GET, "/products/{id}").permitAll()
@@ -57,15 +84,15 @@ public class SecurityConfig {
                                 ).permitAll()
 
 
-                                .requestMatchers(HttpMethod.GET, "/orders/{id}")
-                                .hasAuthority("ROLE_CUSTOMER")
-                                .requestMatchers(HttpMethod.GET, "/orders")
-                                .hasAuthority("ROLE_CUSTOMER")
+                                .requestMatchers(HttpMethod.GET, "/roles").permitAll()
+                                .requestMatchers(HttpMethod.GET, "/roles/{id}").hasAuthority("ROLE_STORE")
+
 
                                 .requestMatchers(HttpMethod.POST, "/orders").hasAuthority("ROLE_CUSTOMER")
                                 .requestMatchers(HttpMethod.PUT, "/orders/{id}").hasAuthority("ROLE_CUSTOMER")
                                 .requestMatchers(HttpMethod.DELETE, "/orders/{id}").hasAuthority("ROLE_CUSTOMER")
                                 .requestMatchers(HttpMethod.GET, "/categories").permitAll()
+                                .requestMatchers(HttpMethod.POST, "/payments/webhook").permitAll()
                                 .anyRequest().authenticated()
                 )
                 .build();

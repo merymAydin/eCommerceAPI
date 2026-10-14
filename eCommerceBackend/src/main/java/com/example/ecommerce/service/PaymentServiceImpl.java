@@ -1,7 +1,9 @@
+
 package com.example.ecommerce.service;
 
 import com.example.ecommerce.dto.request.CreatePaymentRequest;
 import com.example.ecommerce.dto.response.CheckoutSessionResponse;
+import com.example.ecommerce.dto.response.PaymentIntentResponse;
 import com.example.ecommerce.dto.response.PaymentResponse;
 import com.example.ecommerce.entity.*;
 import com.example.ecommerce.exception.ResourceNotFoundException;
@@ -9,9 +11,11 @@ import com.example.ecommerce.repository.OrderRepository;
 import com.example.ecommerce.repository.PaymentRepository;
 import com.example.ecommerce.service.interfaces.PaymentService;
 import com.stripe.exception.StripeException;
+import com.stripe.model.PaymentIntent;
 import com.stripe.model.checkout.Session;
+import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.checkout.SessionCreateParams;
-import jakarta.servlet.http.HttpSession;
+import jakarta.transaction.Transactional;
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -24,11 +28,12 @@ import java.math.BigDecimal;
 @Service
 @AllArgsConstructor
 public class PaymentServiceImpl implements PaymentService {
-    private final OrderRepository orderRepository;
-    private final HttpSession httpSession;
-    private PaymentRepository paymentRepository;
 
-    private PaymentResponse toPaymentResponse(Payment payment){
+    private final OrderRepository orderRepository;
+    private final PaymentRepository paymentRepository;
+    private final StripeCardService stripeCardService;
+
+    private PaymentResponse toPaymentResponse(Payment payment) {
         return new PaymentResponse(
                 payment.getOrder().getId(),
                 payment.getProvider(),
@@ -38,63 +43,97 @@ public class PaymentServiceImpl implements PaymentService {
         );
     }
 
-    private void toSet(        Payment payment,
-                               Order order,
-                               String provider,
-                               String providerPaymentId,
-                               BigDecimal amount){
+    private void toSet(
+            Payment payment,
+            Order order,
+            String provider,
+            String providerPaymentId,
+            BigDecimal amount
+    ) {
         payment.setOrder(order);
         payment.setProvider(provider);
         payment.setProviderPaymentId(providerPaymentId);
         payment.setAmount(amount);
-
     }
 
-    private BigDecimal calculateOrderTotal(Order order){
+    private BigDecimal calculateOrderTotal(Order order) {
         return order.getOrderItems()
                 .stream()
-                .map(i->i.getUnitPrice()
-                        .multiply(BigDecimal.valueOf(i.getQuantity())))
+                .map(item -> item.getUnitPrice()
+                        .multiply(BigDecimal.valueOf(item.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private Order getAuthorizedOrder(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Order not found"));
+
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
+        User user = (User) authentication.getPrincipal();
+
+        if (!user.getId().equals(order.getUser().getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+
+        return order;
     }
 
     @Override
     public PaymentResponse findById(Long id) {
-        Payment  payment = paymentRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Payment not Found"));
+        Payment payment = paymentRepository.findById(id)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Payment not Found"));
+
         return toPaymentResponse(payment);
     }
 
-
     @Override
     public PaymentResponse createPayment(CreatePaymentRequest request) {
-        Payment p = new Payment();
-        Order o = orderRepository.findById(request.orderId()).orElseThrow(()->new ResourceNotFoundException("Order not found"));
-        p.setStatus(PaymentStatus.PENDING);
-        toSet(p,o,request.provider(),request.providerPaymentId(),request.amount());
-        return toPaymentResponse(paymentRepository.save(p));
+        Payment payment = new Payment();
+
+        Order order = orderRepository.findById(request.orderId())
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Order not found"));
+
+        payment.setStatus(PaymentStatus.PENDING);
+
+        toSet(
+                payment,
+                order,
+                request.provider(),
+                request.providerPaymentId(),
+                request.amount()
+        );
+
+        return toPaymentResponse(paymentRepository.save(payment));
     }
-
-
 
     @Override
     public void deletePayment(Long id) {
-        Payment payment = paymentRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Payment not Found"));
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        Payment payment = paymentRepository.findById(id)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Payment not Found"));
+
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
         User user = (User) authentication.getPrincipal();
-        if(!user.getId().equals(payment.getOrder().getUser().getId())) {
+
+        if (!user.getId().equals(payment.getOrder().getUser().getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN);
         }
+
         paymentRepository.deleteById(id);
     }
 
+    // Eski Checkout akışı: yeni PaymentIntent akışını test edene kadar koruyoruz.
     @Override
     public CheckoutSessionResponse createCheckoutSession(Long orderId) {
-        Order order = orderRepository.findById(orderId).orElseThrow(()->new ResourceNotFoundException("Order not found"));
-        Authentication  authentication = SecurityContextHolder.getContext().getAuthentication();
-        User user = (User) authentication.getPrincipal();
-        if(!user.getId().equals(order.getUser().getId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-        }
+        Order order = getAuthorizedOrder(orderId);
+
         SessionCreateParams.Builder paramsBuilder =
                 SessionCreateParams.builder()
                         .setMode(SessionCreateParams.Mode.PAYMENT)
@@ -125,8 +164,10 @@ public class PaymentServiceImpl implements PaymentService {
                             .build()
             );
         }
+
         try {
             Session session = Session.create(paramsBuilder.build());
+
             Payment payment = new Payment();
             payment.setProvider("STRIPE");
             payment.setOrder(order);
@@ -134,8 +175,153 @@ public class PaymentServiceImpl implements PaymentService {
             payment.setAmount(calculateOrderTotal(order));
             payment.setCurrency("try");
             payment.setStatus(PaymentStatus.PENDING);
+
             paymentRepository.save(payment);
+
             return new CheckoutSessionResponse(session.getUrl());
+
+        } catch (StripeException e) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Payment provider error",
+                    e
+            );
+        }
+    }
+
+    @Override
+    public PaymentIntentResponse createSavedCardPaymentIntent(
+            Long orderId,
+            String paymentMethodId
+    ) {
+        Order order = getAuthorizedOrder(orderId);
+
+
+        String customerId =
+                stripeCardService.getCustomerIdForPaymentMethod(paymentMethodId);
+
+        BigDecimal orderTotal = calculateOrderTotal(order);
+        long amountInKurus = orderTotal.movePointRight(2).longValueExact();
+
+        if (amountInKurus <= 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Order amount must be greater than zero"
+            );
+        }
+
+        PaymentIntentCreateParams params =
+                PaymentIntentCreateParams.builder()
+                        .setAmount(amountInKurus)
+                        .setCurrency("try")
+                        .setCustomer(customerId)
+                        .setPaymentMethod(paymentMethodId)
+                        .putMetadata("orderId", orderId.toString())
+                        .build();
+
+        try {
+            PaymentIntent paymentIntent = PaymentIntent.create(params);
+
+            Payment payment = new Payment();
+            payment.setProvider("STRIPE");
+            payment.setOrder(order);
+            payment.setProviderPaymentId(paymentIntent.getId());
+            payment.setAmount(orderTotal);
+            payment.setCurrency("try");
+            payment.setStatus(PaymentStatus.PENDING);
+
+            paymentRepository.save(payment);
+
+            return new PaymentIntentResponse(paymentIntent.getClientSecret());
+
+        } catch (StripeException e) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Payment provider error",
+                    e
+            );
+        }
+    }
+
+    @Transactional
+    @Override
+    public void handlePaymentSuccess(String providerPaymentId) {
+        Payment payment = paymentRepository.findByProviderPaymentId(providerPaymentId).orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.NOT_FOUND, "Payment not found"
+        ));
+
+        if (payment.getStatus() == PaymentStatus.SUCCEEDED) {
+            return;
+        }
+
+        payment.setStatus(PaymentStatus.SUCCEEDED);
+       payment.getOrder().setStatus(OrderStatus.CONFIRMED);
+
+        paymentRepository.save(payment);
+
+    }
+
+    @Transactional
+    @Override
+    public void handlePaymentFailure(String providerPaymentId) {
+        Payment payment = paymentRepository.findByProviderPaymentId(providerPaymentId).orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.NOT_FOUND, "Payment not found"
+        ));
+        if (payment.getStatus() == PaymentStatus.FAILED) {
+            return;
+        }
+        payment.setStatus(PaymentStatus.FAILED);
+        paymentRepository.save(payment);
+    }
+
+    @Override
+    public PaymentIntentResponse createPaymentIntent(Long orderId) {
+
+
+        Order order = getAuthorizedOrder(orderId);
+
+        BigDecimal orderTotal = calculateOrderTotal(order);
+
+
+        long amountInKurus = orderTotal
+                .movePointRight(2)
+                .longValueExact();
+
+        if (amountInKurus <= 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Order amount must be greater than zero"
+            );
+        }
+
+
+        PaymentIntentCreateParams params =
+                PaymentIntentCreateParams.builder()
+                        .setAmount(amountInKurus)
+                        .setCurrency("try")
+                        .putMetadata("orderId", orderId.toString())
+                        .build();
+
+        try {
+
+            PaymentIntent paymentIntent = PaymentIntent.create(params);
+
+
+            Payment payment = new Payment();
+            payment.setProvider("STRIPE");
+            payment.setOrder(order);
+            payment.setProviderPaymentId(paymentIntent.getId());
+            payment.setAmount(orderTotal);
+            payment.setCurrency("try");
+            payment.setStatus(PaymentStatus.PENDING);
+
+            paymentRepository.save(payment);
+
+
+            return new PaymentIntentResponse(
+                    paymentIntent.getClientSecret()
+            );
+
         } catch (StripeException e) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,

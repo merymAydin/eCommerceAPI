@@ -3,11 +3,13 @@ package com.example.ecommerce.controller;
 import com.example.ecommerce.dto.request.CreatePaymentRequest;
 import com.example.ecommerce.dto.request.UpdatePaymentRequest;
 import com.example.ecommerce.dto.response.CheckoutSessionResponse;
+import com.example.ecommerce.dto.response.PaymentIntentResponse;
 import com.example.ecommerce.dto.response.PaymentResponse;
 import com.example.ecommerce.entity.Payment;
 import com.example.ecommerce.service.interfaces.PaymentService;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -30,8 +32,26 @@ public class PaymentController {
         return paymentService.createCheckoutSession(orderId);
     }
 
+    @PostMapping("/payment-intent/{orderId}/saved-card/{paymentMethodId}")
+    public ResponseEntity<PaymentIntentResponse> createSavedCardPaymentIntent(
+            @PathVariable Long orderId,
+            @PathVariable String paymentMethodId
+    ) {
+        return ResponseEntity.ok(
+                paymentService.createSavedCardPaymentIntent(orderId, paymentMethodId)
+        );
+    }
+
     @DeleteMapping("/{id}")
     public void deletePayment(@PathVariable Long id) {
-         paymentService.deletePayment(id);
+        paymentService.deletePayment(id);
+    }
+    @PostMapping("/payment-intent/{orderId}")
+    public ResponseEntity<PaymentIntentResponse> createPaymentIntent(
+            @PathVariable Long orderId
+    ) {
+        return ResponseEntity.ok(
+                paymentService.createPaymentIntent(orderId)
+        );
     }
 }

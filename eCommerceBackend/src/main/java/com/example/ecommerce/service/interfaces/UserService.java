@@ -14,4 +14,5 @@ public interface UserService {
     UserResponse updatePassword(Long id, PasswordUpdateRequest passwordUpdateRequest);
     LoginResponse login(LoginRequest request);
     User findByEmail(String email);
+    UserResponse verifyUser();
 }

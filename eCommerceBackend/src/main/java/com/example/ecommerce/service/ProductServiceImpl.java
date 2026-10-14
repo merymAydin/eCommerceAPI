@@ -2,6 +2,7 @@ package com.example.ecommerce.service;
 
 import com.example.ecommerce.dto.request.CreateProductRequest;
 import com.example.ecommerce.dto.request.UpdateProductRequest;
+import com.example.ecommerce.dto.response.ProductPageResponse;
 import com.example.ecommerce.dto.response.ProductResponse;
 import com.example.ecommerce.entity.Category;
 import com.example.ecommerce.entity.Product;
@@ -12,6 +13,8 @@ import com.example.ecommerce.repository.ProductRepository;
 import com.example.ecommerce.repository.StoreRepository;
 import com.example.ecommerce.service.interfaces.ProductService;
 import lombok.AllArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -24,7 +27,11 @@ public class ProductServiceImpl implements ProductService {
     private CategoryRepository categoryRepository;
 
     private ProductResponse toResponse(Product product) {
+        if (product.getStore() == null) {
+            throw new ResourceNotFoundException("Store not found for product id: " + product.getId());
+        }
         return new ProductResponse(
+                product.getId(),
                 product.getCategory().getId(),
                 product.getName(),
                 product.getDescription(),
@@ -74,9 +81,24 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public List<ProductResponse> findAllProducts() {
-        return productRepository.findAll().stream().map(p->toResponse(p)).toList();
+    public ProductPageResponse findAllProducts(Pageable pageable,Long categoryId) {
+        Page<Product> productPage;
+
+        if (categoryId == null) {
+            productPage = productRepository.findAll(pageable);
+        }else {
+            productPage = productRepository.findByCategory_Id(categoryId, pageable);
+        }
+        List<ProductResponse> products = productPage.getContent()
+                .stream()
+                .map(product -> toResponse(product))
+                .toList();
+
+        return new ProductPageResponse(products, productPage.getTotalElements());
+
     }
+
+
 
     @Override
     public ProductResponse findProductById(Long productId) {
@@ -99,4 +121,6 @@ public class ProductServiceImpl implements ProductService {
     public void deleteProductById(Long productId) {
         productRepository.deleteById(productId);
     }
+
+
 }

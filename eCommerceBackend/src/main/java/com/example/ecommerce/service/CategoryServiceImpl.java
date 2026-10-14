@@ -41,6 +41,7 @@ public class CategoryServiceImpl implements CategoryService {
                 category.getProducts()
                         .stream()
                         .map(p -> new ProductResponse(
+                                p.getId(),
                                 p.getCategory().getId(),
                                 p.getName(),
                                 p.getDescription(),
