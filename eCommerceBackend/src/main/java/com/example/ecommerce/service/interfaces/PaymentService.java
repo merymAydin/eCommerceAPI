@@ -4,8 +4,7 @@ import com.example.ecommerce.dto.request.CreatePaymentRequest;
 import com.example.ecommerce.dto.response.CheckoutSessionResponse;
 import com.example.ecommerce.dto.response.PaymentIntentResponse;
 import com.example.ecommerce.dto.response.PaymentResponse;
-
-
+import com.example.ecommerce.entity.StripeWebhookEvent;
 
 
 public interface PaymentService {
@@ -15,6 +14,5 @@ public interface PaymentService {
     CheckoutSessionResponse createCheckoutSession(Long orderId);
     PaymentIntentResponse createPaymentIntent(Long orderId);
     PaymentIntentResponse createSavedCardPaymentIntent(Long orderId, String paymentMethodId);
-    void handlePaymentSuccess(String providerPaymentId);
-    void handlePaymentFailure(String providerPaymentId);
+    void handleStripeWebhook(String stripeEventId, String eventType, String providerPaymentId);
 }

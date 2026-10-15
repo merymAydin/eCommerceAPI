@@ -48,7 +48,9 @@ public class CategoryServiceImpl implements CategoryService {
                                 p.getPrice(),
                                 p.getStock(),
                                 p.getImageUrl(),
-                                p.getStore().getId()
+                                p.getStore().getId(),
+                                p.getRating(),
+                                p.getReviewCount()
                         ))
                         .toList()
         );

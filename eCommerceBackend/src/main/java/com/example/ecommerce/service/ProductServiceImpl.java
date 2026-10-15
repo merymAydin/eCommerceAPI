@@ -38,8 +38,9 @@ public class ProductServiceImpl implements ProductService {
                 product.getPrice(),
                 product.getStock(),
                 product.getImageUrl(),
-                product.getStore().getId()
-
+                product.getStore().getId(),
+                product.getRating(),
+                product.getReviewCount()
         );
     }
 
@@ -55,6 +56,7 @@ public class ProductServiceImpl implements ProductService {
         product.setPrice(createProductRequest.price());
         product.setStock(createProductRequest.stock());
         product.setImageUrl(createProductRequest.imageUrl());
+
 
         Store store = storeRepository.findById(createProductRequest.storeId()).orElseThrow(()->new ResourceNotFoundException("Store not found"));
 

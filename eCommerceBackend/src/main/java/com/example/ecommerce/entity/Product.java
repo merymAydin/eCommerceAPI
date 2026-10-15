@@ -30,4 +30,8 @@ public class Product extends BaseEntity{
     @Column(unique = true)
     private Long sourceProductId;
 
+    private Double rating;
+    private Integer reviewCount;
+
+
 }

@@ -9,11 +9,10 @@ import com.stripe.model.StripeObject;
 import com.stripe.net.Webhook;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Optional;
+
 
 @Slf4j
 @RestController
@@ -54,31 +53,35 @@ public class PaymentWebhookController {
             return ResponseEntity.ok("Event ignored");
         }
 
-         Optional<StripeObject> stripeObject =
-                event.getDataObjectDeserializer().getObject();
+        StripeObject stripeObject;
 
-        if (stripeObject.isEmpty()) {
-            log.error("Could not deserialize Stripe event: {}", event.getId());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("Could not deserialize event");
+        try {
+            stripeObject = event.getDataObjectDeserializer()
+                    .getObject()
+                    .orElseGet(() -> {
+                        try {
+                            return event.getDataObjectDeserializer().deserializeUnsafe();
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    });
+        } catch (Exception e) {
+            log.error("Stripe event deserialization failed", e);
+            return ResponseEntity.internalServerError()
+                    .body("Event deserialization failed");
         }
 
-        if (!(stripeObject.get() instanceof PaymentIntent paymentIntent)) {
+        if (!(stripeObject instanceof PaymentIntent paymentIntent)) {
             log.error("Unexpected Stripe object for event: {}", event.getId());
             return ResponseEntity.badRequest().body("Invalid event object");
         }
 
 
-        if (eventType.equals("payment_intent.succeeded")) {
-
-            paymentService.handlePaymentSuccess(paymentIntent.getId());
-            log.info("Payment succeeded. PaymentIntent ID: {}", paymentIntent.getId());
-
-        } else if (eventType.equals("payment_intent.payment_failed")) {
-
-            paymentService.handlePaymentFailure(paymentIntent.getId());
-            log.warn("Payment failed. PaymentIntent ID: {}", paymentIntent.getId());
-        }
+        paymentService.handleStripeWebhook(
+                event.getId(),
+                eventType,
+                paymentIntent.getId()
+        );
 
         return ResponseEntity.ok("Webhook processed");
     }

@@ -10,6 +10,8 @@ public record ProductResponse (
         BigDecimal price,
         int stock,
         String imageUrl,
-        Long storeId
+        Long storeId,
+        Double rating,
+        Integer reviewCount
 ){
 }

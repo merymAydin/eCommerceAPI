@@ -57,11 +57,15 @@ public class DataMigrationService {
         product.setPrice(productMigrationDto.price());
         product.setStock(productMigrationDto.stock());
         product.setCategory(category);
+        product.setRating(productMigrationDto.rating());
+
 
             if (productMigrationDto.images() != null
                     && !productMigrationDto.images().isEmpty()) {
                 product.setImageUrl(productMigrationDto.images().get(0).url());
             }
+
+        System.out.println("SOURCE RATING: " + productMigrationDto.rating());
 
 
         return productRepository.save(product);

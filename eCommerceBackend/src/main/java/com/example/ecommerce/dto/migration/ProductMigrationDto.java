@@ -16,7 +16,8 @@ public record ProductMigrationDto(
             @JsonProperty("category_id")
         	Long categoryId,
         	Double rating,
-            Integer sellCount,
-            List<ProductImageMigrationDto> images
+            @JsonProperty("sell_count")
+			Integer sellCount,
+			List<ProductImageMigrationDto> images
 ) {
 }

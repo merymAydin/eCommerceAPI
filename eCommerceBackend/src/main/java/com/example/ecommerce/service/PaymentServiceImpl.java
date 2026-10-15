@@ -9,21 +9,24 @@ import com.example.ecommerce.entity.*;
 import com.example.ecommerce.exception.ResourceNotFoundException;
 import com.example.ecommerce.repository.OrderRepository;
 import com.example.ecommerce.repository.PaymentRepository;
+import com.example.ecommerce.repository.StripeWebhookEventRepository;
 import com.example.ecommerce.service.interfaces.PaymentService;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.model.checkout.Session;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.checkout.SessionCreateParams;
-import jakarta.transaction.Transactional;
+
 import lombok.AllArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Service
 @AllArgsConstructor
@@ -32,6 +35,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final OrderRepository orderRepository;
     private final PaymentRepository paymentRepository;
     private final StripeCardService stripeCardService;
+    private final StripeWebhookEventRepository stripeWebhookEventRepository;
 
     private PaymentResponse toPaymentResponse(Payment payment) {
         return new PaymentResponse(
@@ -129,7 +133,7 @@ public class PaymentServiceImpl implements PaymentService {
         paymentRepository.deleteById(id);
     }
 
-    // Eski Checkout akışı: yeni PaymentIntent akışını test edene kadar koruyoruz.
+
     @Override
     public CheckoutSessionResponse createCheckoutSession(Long orderId) {
         Order order = getAuthorizedOrder(orderId);
@@ -243,35 +247,30 @@ public class PaymentServiceImpl implements PaymentService {
         }
     }
 
-    @Transactional
-    @Override
-    public void handlePaymentSuccess(String providerPaymentId) {
-        Payment payment = paymentRepository.findByProviderPaymentId(providerPaymentId).orElseThrow(() -> new ResponseStatusException(
-                HttpStatus.NOT_FOUND, "Payment not found"
-        ));
 
-        if (payment.getStatus() == PaymentStatus.SUCCEEDED) {
+    @Transactional
+
+    @Override
+    public void handleStripeWebhook(String stripeEventId, String eventType, String providerPaymentId) {
+        int inserted = stripeWebhookEventRepository.addEventId(eventType,stripeEventId,LocalDateTime.now());
+        if (inserted == 0) {
             return;
         }
 
-        payment.setStatus(PaymentStatus.SUCCEEDED);
-       payment.getOrder().setStatus(OrderStatus.CONFIRMED);
+        Payment payment = paymentRepository.findByProviderPaymentId(providerPaymentId).orElseThrow(()->new ResourceNotFoundException("Payment not found"));
 
-        paymentRepository.save(payment);
-
-    }
-
-    @Transactional
-    @Override
-    public void handlePaymentFailure(String providerPaymentId) {
-        Payment payment = paymentRepository.findByProviderPaymentId(providerPaymentId).orElseThrow(() -> new ResponseStatusException(
-                HttpStatus.NOT_FOUND, "Payment not found"
-        ));
-        if (payment.getStatus() == PaymentStatus.FAILED) {
-            return;
+        if (eventType.equals("payment_intent.succeeded")) {
+            payment.setStatus(PaymentStatus.SUCCEEDED);
+            payment.getOrder().setStatus(OrderStatus.CONFIRMED);
+        } else if (
+                eventType.equals("payment_intent.payment_failed")
+                        && payment.getStatus() != PaymentStatus.SUCCEEDED
+        ) {
+            payment.setStatus(PaymentStatus.FAILED);
         }
-        payment.setStatus(PaymentStatus.FAILED);
         paymentRepository.save(payment);
+
+
     }
 
     @Override
