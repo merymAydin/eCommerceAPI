@@ -2,9 +2,11 @@ package com.example.ecommerce.controller;
 
 import com.example.ecommerce.dto.request.CreatePaymentRequest;
 import com.example.ecommerce.dto.request.UpdatePaymentRequest;
+import com.example.ecommerce.dto.request.VerifyPaymentRequest;
 import com.example.ecommerce.dto.response.CheckoutSessionResponse;
 import com.example.ecommerce.dto.response.PaymentIntentResponse;
 import com.example.ecommerce.dto.response.PaymentResponse;
+import com.example.ecommerce.dto.response.VerifyPaymentResponse;
 import com.example.ecommerce.entity.Payment;
 import com.example.ecommerce.service.interfaces.PaymentService;
 import jakarta.validation.Valid;
@@ -24,6 +26,15 @@ public class PaymentController {
     @PostMapping
     public PaymentResponse createPayment(@Valid @RequestBody CreatePaymentRequest createPaymentRequest) {
         return paymentService.createPayment(createPaymentRequest);
+    }
+
+    /**
+     * Authenticated fallback used by the payment success page.
+     * Only {@code orderId} is accepted; all payment facts are read from Stripe.
+     */
+    @PostMapping("/verify")
+    public VerifyPaymentResponse verifyPayment(@Valid @RequestBody VerifyPaymentRequest request) {
+        return paymentService.verifyPayment(request.orderId());
     }
     @PostMapping("/checkout-session/{orderId}")
     public CheckoutSessionResponse createCheckoutSession(

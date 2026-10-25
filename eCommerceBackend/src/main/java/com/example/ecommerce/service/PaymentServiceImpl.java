@@ -5,6 +5,8 @@ import com.example.ecommerce.dto.request.CreatePaymentRequest;
 import com.example.ecommerce.dto.response.CheckoutSessionResponse;
 import com.example.ecommerce.dto.response.PaymentIntentResponse;
 import com.example.ecommerce.dto.response.PaymentResponse;
+import com.example.ecommerce.dto.response.VerifyPaymentResponse;
+import com.example.ecommerce.dto.webhook.StripeWebhookEventData;
 import com.example.ecommerce.entity.*;
 import com.example.ecommerce.exception.ResourceNotFoundException;
 import com.example.ecommerce.repository.OrderRepository;
@@ -17,7 +19,10 @@ import com.stripe.model.checkout.Session;
 import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.checkout.SessionCreateParams;
 
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -27,15 +32,23 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Map;
+import java.util.Optional;
 
+@Slf4j
 @Service
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class PaymentServiceImpl implements PaymentService {
 
     private final OrderRepository orderRepository;
     private final PaymentRepository paymentRepository;
     private final StripeCardService stripeCardService;
     private final StripeWebhookEventRepository stripeWebhookEventRepository;
+    private final PaymentConfirmationService paymentConfirmationService;
+    private final StripePaymentGateway stripePaymentGateway;
+
+    @Value("${app.frontend.base-url:http://localhost:3000}")
+    private String frontendBaseUrl = "http://localhost:3000";
 
     private PaymentResponse toPaymentResponse(Payment payment) {
         return new PaymentResponse(
@@ -68,21 +81,43 @@ public class PaymentServiceImpl implements PaymentService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    private Order getAuthorizedOrder(Long orderId) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Order not found"));
-
+    private User getAuthenticatedUser() {
         Authentication authentication =
                 SecurityContextHolder.getContext().getAuthentication();
 
-        User user = (User) authentication.getPrincipal();
+        if (authentication == null || !(authentication.getPrincipal() instanceof User user)) {
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Authentication is required"
+            );
+        }
 
-        if (!user.getId().equals(order.getUser().getId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        return user;
+    }
+
+    private Order getAuthorizedOrder(Long orderId) {
+        Order order = orderRepository.findDetailedById(orderId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Order not found"));
+
+        User user = getAuthenticatedUser();
+
+        if (order.getUser() == null || !user.getId().equals(order.getUser().getId())) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Order does not belong to the authenticated user"
+            );
         }
 
         return order;
+    }
+
+    private String frontendUrl(String path) {
+        String baseUrl = frontendBaseUrl != null ? frontendBaseUrl : "http://localhost:3000";
+        if (baseUrl.endsWith("/")) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        }
+        return baseUrl + path;
     }
 
     @Override
@@ -142,9 +177,16 @@ public class PaymentServiceImpl implements PaymentService {
                 SessionCreateParams.builder()
                         .setMode(SessionCreateParams.Mode.PAYMENT)
                         .setSuccessUrl(
-                                "http://localhost:3000/payment-success?session_id={CHECKOUT_SESSION_ID}"
+                                frontendUrl("/payment-success?session_id={CHECKOUT_SESSION_ID}")
                         )
-                        .setCancelUrl("http://localhost:3000/create-order");
+                        .setCancelUrl(frontendUrl("/create-order"))
+                        .setClientReferenceId(orderId.toString())
+                        .putMetadata("orderId", orderId.toString())
+                        .setPaymentIntentData(
+                                SessionCreateParams.PaymentIntentData.builder()
+                                        .putMetadata("orderId", orderId.toString())
+                                        .build()
+                        );
 
         for (OrderItem item : order.getOrderItems()) {
             paramsBuilder.addLineItem(
@@ -249,28 +291,454 @@ public class PaymentServiceImpl implements PaymentService {
 
 
     @Transactional
-
     @Override
-    public void handleStripeWebhook(String stripeEventId, String eventType, String providerPaymentId) {
-        int inserted = stripeWebhookEventRepository.addEventId(eventType,stripeEventId,LocalDateTime.now());
-        if (inserted == 0) {
+    public void handleStripeWebhook(StripeWebhookEventData event) {
+        if (stripeWebhookEventRepository.existsByStripeEventId(event.eventId())) {
+            log.info("Stripe event already processed. eventId={}", event.eventId());
             return;
         }
 
-        Payment payment = paymentRepository.findByProviderPaymentId(providerPaymentId).orElseThrow(()->new ResourceNotFoundException("Payment not found"));
-
-        if (eventType.equals("payment_intent.succeeded")) {
-            payment.setStatus(PaymentStatus.SUCCEEDED);
-            payment.getOrder().setStatus(OrderStatus.CONFIRMED);
-        } else if (
-                eventType.equals("payment_intent.payment_failed")
-                        && payment.getStatus() != PaymentStatus.SUCCEEDED
-        ) {
-            payment.setStatus(PaymentStatus.FAILED);
+        switch (event.eventType()) {
+            case "payment_intent.succeeded" -> handlePaymentIntentSucceeded(event);
+            case "payment_intent.payment_failed", "payment_intent.canceled" ->
+                    handlePaymentIntentFailed(event);
+            case "checkout.session.completed", "checkout.session.async_payment_succeeded" ->
+                    handleCheckoutSessionSucceeded(event);
+            case "checkout.session.expired", "checkout.session.async_payment_failed" ->
+                    handleCheckoutSessionFailed(event);
+            default -> log.info(
+                    "Ignoring unsupported Stripe event. eventId={}, type={}",
+                    event.eventId(),
+                    event.eventType()
+            );
         }
-        paymentRepository.save(payment);
 
+        // The marker is written in the same transaction as the business changes.
+        // If processing fails, both are rolled back and Stripe can retry safely.
+        int marked = stripeWebhookEventRepository.markProcessed(
+                event.eventType(),
+                event.eventId(),
+                LocalDateTime.now()
+        );
 
+        if (marked == 0) {
+            log.info(
+                    "Stripe event was already marked by another transaction. eventId={}",
+                    event.eventId()
+            );
+        }
+    }
+
+    private void handlePaymentIntentSucceeded(StripeWebhookEventData event) {
+        if (!"succeeded".equalsIgnoreCase(event.stripeStatus())) {
+            log.warn(
+                    "payment_intent.succeeded event has unexpected status. eventId={}, status={}",
+                    event.eventId(),
+                    event.stripeStatus()
+            );
+            return;
+        }
+
+        Optional<Payment> paymentOptional =
+                findPaymentForSuccessfulEvent(event.objectId(), event.orderId());
+
+        if (paymentOptional.isEmpty()) {
+            log.warn(
+                    "No payment found for payment_intent.succeeded. eventId={}, paymentIntentId={}, orderId={}",
+                    event.eventId(),
+                    event.objectId(),
+                    event.orderId()
+            );
+            return;
+        }
+
+        Payment payment = paymentOptional.get();
+
+        PaymentConfirmationResult result = paymentConfirmationService.confirmVerifiedPayment(
+                payment.getOrder().getId(),
+                payment.getId(),
+                event.objectId(),
+                event.amount(),
+                event.currency(),
+                event.orderId() != null ? event.orderId().toString() : null
+        );
+
+        logConfirmationResult(event, result);
+    }
+
+    private void handlePaymentIntentFailed(StripeWebhookEventData event) {
+        Optional<Payment> paymentOptional = findByProviderPaymentId(event.objectId());
+
+        if (paymentOptional.isEmpty()) {
+            log.warn(
+                    "No payment found for failed/canceled payment intent. eventId={}, paymentIntentId={}",
+                    event.eventId(),
+                    event.objectId()
+            );
+            return;
+        }
+
+        paymentConfirmationService.markPaymentFailed(paymentOptional.get().getId());
+    }
+
+    private void handleCheckoutSessionSucceeded(StripeWebhookEventData event) {
+        if (!"paid".equalsIgnoreCase(event.stripeStatus())) {
+            log.info(
+                    "Checkout session is not paid yet. eventId={}, sessionId={}, paymentStatus={}",
+                    event.eventId(),
+                    event.objectId(),
+                    event.stripeStatus()
+            );
+            return;
+        }
+
+        Optional<Payment> paymentOptional =
+                findPaymentForSuccessfulEvent(event.objectId(), event.orderId());
+
+        if (paymentOptional.isEmpty()) {
+            log.warn(
+                    "No payment found for checkout session. eventId={}, sessionId={}, orderId={}",
+                    event.eventId(),
+                    event.objectId(),
+                    event.orderId()
+            );
+            return;
+        }
+
+        Payment payment = paymentOptional.get();
+
+        PaymentConfirmationResult result = paymentConfirmationService.confirmVerifiedPayment(
+                payment.getOrder().getId(),
+                payment.getId(),
+                event.paymentIntentId(),
+                event.amount(),
+                event.currency(),
+                event.orderId() != null ? event.orderId().toString() : null
+        );
+
+        logConfirmationResult(event, result);
+    }
+
+    private void handleCheckoutSessionFailed(StripeWebhookEventData event) {
+        Optional<Payment> paymentOptional = findByProviderPaymentId(event.objectId());
+
+        if (paymentOptional.isEmpty()) {
+            log.warn(
+                    "No payment found for failed/expired checkout session. eventId={}, sessionId={}",
+                    event.eventId(),
+                    event.objectId()
+            );
+            return;
+        }
+
+        paymentConfirmationService.markPaymentFailed(paymentOptional.get().getId());
+    }
+
+    private void logConfirmationResult(
+            StripeWebhookEventData event,
+            PaymentConfirmationResult result
+    ) {
+        if (result.isSuccessful()) {
+            log.info(
+                    "Stripe payment confirmed. eventId={}, orderId={}, paymentIntentId={}, status={}",
+                    event.eventId(),
+                    result.orderId(),
+                    result.paymentIntentId(),
+                    result.status()
+            );
+            return;
+        }
+
+        log.error(
+                "Stripe payment confirmation rejected. eventId={}, orderId={}, status={}",
+                event.eventId(),
+                result.orderId(),
+                result.status()
+        );
+    }
+
+    private Optional<Payment> findPaymentForSuccessfulEvent(
+            String providerPaymentId,
+            Long orderId
+    ) {
+        Optional<Payment> direct = findByProviderPaymentId(providerPaymentId);
+
+        if (direct.isPresent()) {
+            return direct;
+        }
+
+        if (orderId == null) {
+            return Optional.empty();
+        }
+
+        Optional<Payment> pendingPayment = paymentRepository
+                .findFirstByOrder_IdAndStatusOrderByIdDesc(orderId, PaymentStatus.PENDING);
+
+        if (pendingPayment.isPresent()
+                && isSamePaymentAttempt(pendingPayment.get(), providerPaymentId)) {
+            return pendingPayment;
+        }
+
+        Optional<Payment> latestPayment =
+                paymentRepository.findFirstByOrder_IdOrderByIdDesc(orderId);
+
+        if (latestPayment.isPresent()
+                && isSamePaymentAttempt(latestPayment.get(), providerPaymentId)) {
+            return latestPayment;
+        }
+
+        return Optional.empty();
+    }
+
+    private Optional<Payment> findByProviderPaymentId(String providerPaymentId) {
+        try {
+            return paymentRepository.findByProviderPaymentId(providerPaymentId);
+        } catch (IncorrectResultSizeDataAccessException e) {
+            log.error("Multiple payments found for providerPaymentId={}", providerPaymentId, e);
+            return Optional.empty();
+        }
+    }
+
+    private boolean isSamePaymentAttempt(Payment payment, String providerPaymentId) {
+        String storedProviderPaymentId = payment.getProviderPaymentId();
+
+        if (storedProviderPaymentId == null
+                || storedProviderPaymentId.equals(providerPaymentId)) {
+            return true;
+        }
+
+        // Checkout sessions are stored by session id first. The PaymentIntent id
+        // arrives later, so a session can legitimately resolve to the same payment.
+        return storedProviderPaymentId.startsWith("cs_");
+    }
+
+    @Override
+    public VerifyPaymentResponse verifyPayment(Long orderId) {
+        User user = getAuthenticatedUser();
+
+        Order order = orderRepository.findDetailedById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+
+        if (order.getUser() == null || !user.getId().equals(order.getUser().getId())) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Order does not belong to the authenticated user"
+            );
+        }
+
+        Payment payment = paymentRepository
+                .findFirstByOrder_IdAndStatusOrderByIdDesc(orderId, PaymentStatus.SUCCEEDED)
+                .orElseGet(() -> paymentRepository
+                        .findFirstByOrder_IdOrderByIdDesc(orderId)
+                        .orElseThrow(() -> new ResponseStatusException(
+                                HttpStatus.CONFLICT,
+                                "Payment has not been initialized for this order"
+                        )));
+
+        String providerPaymentId = payment.getProviderPaymentId();
+        if (providerPaymentId == null || providerPaymentId.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Payment has no Stripe reference"
+            );
+        }
+
+        StripeVerificationSnapshot snapshot;
+        try {
+            snapshot = retrieveAndVerifyStripePayment(orderId, providerPaymentId);
+        } catch (StripeException e) {
+            log.error(
+                    "Stripe verification failed. orderId={}, providerPaymentId={}",
+                    orderId,
+                    providerPaymentId,
+                    e
+            );
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Could not verify payment with Stripe",
+                    e
+            );
+        }
+
+        if (!snapshot.paid()) {
+            log.info(
+                    "Stripe payment is not completed. orderId={}, stripeStatus={}",
+                    orderId,
+                    snapshot.stripeStatus()
+            );
+
+            return new VerifyPaymentResponse(
+                    orderId,
+                    order.getStatus(),
+                    payment.getStatus(),
+                    snapshot.paymentIntentId(),
+                    false,
+                    "Payment is not completed"
+            );
+        }
+
+        PaymentConfirmationResult result = paymentConfirmationService.confirmVerifiedPayment(
+                orderId,
+                payment.getId(),
+                snapshot.paymentIntentId(),
+                snapshot.amount(),
+                snapshot.currency(),
+                snapshot.stripeOrderId()
+        );
+
+        return mapVerificationResult(result);
+    }
+
+    private VerifyPaymentResponse mapVerificationResult(PaymentConfirmationResult result) {
+        return switch (result.status()) {
+            case CONFIRMED, ALREADY_CONFIRMED -> new VerifyPaymentResponse(
+                    result.orderId(),
+                    result.orderStatus(),
+                    result.paymentStatus(),
+                    result.paymentIntentId(),
+                    true,
+                    "Payment verified"
+            );
+            case ORDER_CANCELLED -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Payment succeeded but order is cancelled; manual review is required"
+            );
+            case AMOUNT_MISMATCH -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Payment amount does not match order total"
+            );
+            case CURRENCY_MISMATCH -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Payment currency does not match order currency"
+            );
+            case METADATA_MISMATCH -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Payment metadata does not match order"
+            );
+            case PROVIDER_ID_MISMATCH -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Payment provider reference does not match"
+            );
+            case PAYMENT_REFUNDED -> throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Payment was refunded"
+            );
+            case PAYMENT_NOT_FOUND -> throw new ResourceNotFoundException("Payment not found");
+            case ORDER_NOT_FOUND -> throw new ResourceNotFoundException("Order not found");
+        };
+    }
+
+    private StripeVerificationSnapshot retrieveAndVerifyStripePayment(
+            Long orderId,
+            String providerPaymentId
+    ) throws StripeException {
+        if (providerPaymentId.startsWith("cs_")) {
+            Session session = stripePaymentGateway.retrieveCheckoutSession(providerPaymentId);
+            String sessionOrderId = extractStripeOrderId(
+                    session.getMetadata(),
+                    session.getClientReferenceId()
+            );
+            validateStripeOrderId(orderId, sessionOrderId);
+
+            String paymentIntentId = session.getPaymentIntent();
+
+            if (!"paid".equalsIgnoreCase(session.getPaymentStatus())) {
+                return new StripeVerificationSnapshot(
+                        false,
+                        paymentIntentId,
+                        session.getAmountTotal(),
+                        session.getCurrency(),
+                        sessionOrderId,
+                        session.getPaymentStatus()
+                );
+            }
+
+            if (paymentIntentId == null || paymentIntentId.isBlank()) {
+                throw new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Paid checkout session has no payment intent"
+                );
+            }
+
+            PaymentIntent paymentIntent =
+                    stripePaymentGateway.retrievePaymentIntent(paymentIntentId);
+            String paymentIntentOrderId = extractStripeOrderId(
+                    paymentIntent.getMetadata(),
+                    null
+            );
+
+            // Older sessions may not have copied metadata onto the PaymentIntent.
+            // The session itself was already validated, so fall back to it.
+            if (paymentIntentOrderId == null) {
+                paymentIntentOrderId = sessionOrderId;
+            }
+            validateStripeOrderId(orderId, paymentIntentOrderId);
+
+            return new StripeVerificationSnapshot(
+                    "succeeded".equalsIgnoreCase(paymentIntent.getStatus()),
+                    paymentIntent.getId(),
+                    paymentIntent.getAmount(),
+                    paymentIntent.getCurrency(),
+                    paymentIntentOrderId,
+                    paymentIntent.getStatus()
+            );
+        }
+
+        if (providerPaymentId.startsWith("pi_")) {
+            PaymentIntent paymentIntent =
+                    stripePaymentGateway.retrievePaymentIntent(providerPaymentId);
+            String paymentIntentOrderId = extractStripeOrderId(
+                    paymentIntent.getMetadata(),
+                    null
+            );
+            validateStripeOrderId(orderId, paymentIntentOrderId);
+
+            return new StripeVerificationSnapshot(
+                    "succeeded".equalsIgnoreCase(paymentIntent.getStatus()),
+                    paymentIntent.getId(),
+                    paymentIntent.getAmount(),
+                    paymentIntent.getCurrency(),
+                    paymentIntentOrderId,
+                    paymentIntent.getStatus()
+            );
+        }
+
+        throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Unsupported Stripe payment reference"
+        );
+    }
+
+    private String extractStripeOrderId(
+            Map<String, String> metadata,
+            String clientReferenceId
+    ) {
+        if (metadata != null) {
+            String orderId = metadata.get("orderId");
+            if (orderId != null && !orderId.isBlank()) {
+                return orderId;
+            }
+        }
+        return clientReferenceId;
+    }
+
+    private void validateStripeOrderId(Long orderId, String stripeOrderId) {
+        if (stripeOrderId == null || !stripeOrderId.equals(orderId.toString())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Stripe payment metadata does not match order"
+            );
+        }
+    }
+
+    private record StripeVerificationSnapshot(
+            boolean paid,
+            String paymentIntentId,
+            Long amount,
+            String currency,
+            String stripeOrderId,
+            String stripeStatus
+    ) {
     }
 
     @Override
